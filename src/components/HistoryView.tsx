@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { AnalysisReport } from '../types/analysis';
-import { calculateChecklistProgress, getOverallStatusMeta } from '../utils/analysisHelpers';
+import {
+  calculateChecklistProgress,
+  calculateReliabilityScore,
+  determineOverallStatusFromScore,
+  getOverallStatusMeta,
+} from '../utils/analysisHelpers';
 import { getPlatformLabel } from '../utils/urlParser';
 
 interface HistoryViewProps {
@@ -55,7 +60,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center space-y-3">
           <p className="text-base font-semibold text-slate-900">저장된 분석 기록이 아직 없습니다</p>
           <p className="text-sm text-slate-600">
-            영상 링크, 텍스트, 이미지를 입력해 첫 번째 신뢰도 분석을 시작해 보세요.
+            영상 링크를 입력해 첫 번째 신뢰도 분석을 시작해 보세요.
           </p>
           <div className="pt-2">
             <button
@@ -88,7 +93,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               <p className="p-6 text-sm text-slate-600">검색어와 일치하는 기록이 없습니다.</p>
             ) : (
               filtered.map((item) => {
-                const statusMeta = getOverallStatusMeta(item.overallStatus);
+                const breakdown =
+                  item.scoreBreakdown ??
+                  calculateReliabilityScore({
+                    checklist: item.checklist,
+                    exaggeratedCount: item.exaggeratedExpressions.length,
+                    aiLikelihoodLevel: item.aiGenerationAssessment.likelihoodLevel,
+                  });
+                const score = item.reliabilityScore ?? breakdown.totalScore;
+                const statusMeta = getOverallStatusMeta(determineOverallStatusFromScore(score));
                 const progress = calculateChecklistProgress(item.checklist);
                 const dateLabel = new Date(item.createdAt).toLocaleString('ko-KR', {
                   month: '2-digit',
@@ -108,9 +121,21 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       className="text-left flex-1 min-w-0 space-y-1 cursor-pointer group"
                     >
                       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-mono tabular-nums">
+                        <span className="font-bold text-slate-950">신뢰 {score}점</span>
+                        <span aria-hidden="true">·</span>
                         <span className={`font-sans font-semibold ${statusMeta.badgeTextClass}`}>
                           {statusMeta.label}
                         </span>
+                        {item.aiSuspicion && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-sans text-slate-700">
+                              {item.aiSuspicion.score != null
+                                ? `AI 의심 ${item.aiSuspicion.score}점`
+                                : 'AI 의심 판별 불가'}
+                            </span>
+                          </>
+                        )}
                         <span aria-hidden="true">·</span>
                         <span>
                           {item.inputMode === 'url'

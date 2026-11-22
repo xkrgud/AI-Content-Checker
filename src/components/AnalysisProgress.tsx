@@ -27,6 +27,11 @@ const PIPELINE_STEPS = [
     title: '04. AI 생성 가능성 및 한계 평가',
     description: '합성·생성 가능성에 관한 시각적·맥락적 단서와 판별 불확실성을 안내합니다.',
   },
+  {
+    id: 'fact-check',
+    title: '05. 핵심 주장 Google 검색 자료 확인',
+    description: '추출된 핵심 주장(최대 3개)에 대해 Google 검색으로 실제 자료와 출처를 대조합니다.',
+  },
 ];
 
 export const AnalysisProgress: React.FC<AnalysisProgressProps> = ({ contentLabel, onCancel }) => {
@@ -106,7 +111,7 @@ export const AnalysisProgress: React.FC<AnalysisProgressProps> = ({ contentLabel
             onClick={onCancel}
             className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
           >
-            입력 화면으로 돌아가기
+            분석 취소
           </button>
         </div>
       </div>

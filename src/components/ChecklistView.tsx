@@ -3,6 +3,7 @@ import { ArrowLeft, CheckCircle2 } from 'lucide-react';
 import type { AnalysisReport, ChecklistItem } from '../types/analysis';
 import {
   calculateChecklistProgress,
+  getChecklistItemScore,
   getChecklistVerdictMeta,
 } from '../utils/analysisHelpers';
 
@@ -35,7 +36,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
           <p className="mt-1.5 text-sm text-slate-600">
             {report
               ? `대상 콘텐츠: ${report.contentTitle}`
-              : '콘텐츠를 분석하면 AI가 아래 신뢰성 검증 항목을 직접 점검하여 판정과 근거를 채워 드립니다.'}
+              : '콘텐츠를 분석하면 AI가 아래 신뢰성 검증 항목을 직접 점검하여 점수와 이유를 채워 드립니다.'}
           </p>
         </div>
 
@@ -106,7 +107,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
 
         <p className="text-xs text-slate-600">
           {report
-            ? `총 ${progress.total}개 항목 중 ${progress.passed}개가 충족되었고, ${unresolvedItems.length}개 항목에서 부족하거나 추가 확인이 필요한 요소가 확인되었습니다.`
+            ? `총 ${progress.total}개 항목 중 ${progress.passed}개가 충족되었고, ${unresolvedItems.length}개 항목에서 부족하거나 추가 확인이 필요한 요소가 확인되었어요.`
             : '아직 분석된 콘텐츠가 없어 기본 검증 항목만 표시됩니다.'}
         </p>
       </div>
@@ -115,6 +116,7 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
       <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
         {items.map((item, idx) => {
           const verdictMeta = getChecklistVerdictMeta(item.aiVerdict);
+          const itemScore = item.category === '기본 검증' ? getChecklistItemScore(item.aiVerdict) : null;
           return (
             <div key={item.id} className="p-5 sm:p-6 space-y-2.5">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -125,6 +127,14 @@ export const ChecklistView: React.FC<ChecklistViewProps> = ({
                     </span>
                     <span aria-hidden="true">·</span>
                     <span>{item.category}</span>
+                    {itemScore !== null && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                          {itemScore}점 / 15점
+                        </span>
+                      </>
+                    )}
                   </div>
                   <p className="text-sm font-semibold leading-snug text-slate-950 sm:text-base">
                     {item.question}

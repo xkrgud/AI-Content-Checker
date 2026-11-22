@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Header, type ActiveTab } from './components/Header';
 import { InputWorkbench } from './components/InputWorkbench';
 import { AnalysisProgress } from './components/AnalysisProgress';
@@ -9,11 +9,13 @@ import { HistoryView } from './components/HistoryView';
 import type {
   AnalysisReport,
   ChecklistItem,
-  InputMode,
+  PlatformType,
   UrlInspectionResult,
 } from './types/analysis';
 import { buildDefaultChecklist } from './utils/analysisHelpers';
+import { consumeSharedMediaRecord } from './utils/shareStorage';
 import { extractShareTargetParams, validateAndNormalizeUrl } from './utils/urlParser';
+import { canStartUrlScreenAnalysis, validateVideoFileMeta } from './utils/videoUpload';
 
 const HISTORY_STORAGE_KEY = 'ai_content_checker_history_v1';
 
@@ -30,13 +32,11 @@ function loadSavedHistory(): AnalysisReport[] {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('analyze');
-  const [inputMode, setInputMode] = useState<InputMode>('url');
   const [urlInput, setUrlInput] = useState('');
+  const [shortVideoNormalizedUrl, setShortVideoNormalizedUrl] = useState<string | null>(null);
   const [contentTitle, setContentTitle] = useState('');
-  const [textInput, setTextInput] = useState('');
   const [transcriptInput, setTranscriptInput] = useState('');
-  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
-  const [imageFileName, setImageFileName] = useState<string | null>(null);
+  const [uploadedVideoFile, setUploadedVideoFile] = useState<File | null>(null);
   const [inspectionResult, setInspectionResult] = useState<UrlInspectionResult | null>(null);
 
   const [sharedNotice, setSharedNotice] = useState<string | null>(null);
@@ -46,6 +46,9 @@ export default function App() {
   const [currentReport, setCurrentReport] = useState<AnalysisReport | null>(null);
   const [standaloneChecklist] = useState<ChecklistItem[]>(() => buildDefaultChecklist([]));
   const [history, setHistory] = useState<AnalysisReport[]>(() => loadSavedHistory());
+
+  const analyzeAbortRef = useRef<AbortController | null>(null);
+  const activeRequestIdRef = useRef<number>(0);
 
   useEffect(() => {
     try {
@@ -61,10 +64,20 @@ export default function App() {
     }
   }, []);
 
-  const applySharedUrl = async (sharedUrl: string, sharedTitle?: string, sharedText?: string) => {
+  useEffect(() => {
+    return () => {
+      analyzeAbortRef.current?.abort();
+    };
+  }, []);
+
+  const applySharedUrl = async (
+    sharedUrl: string,
+    sharedTitle?: string,
+    sharedText?: string,
+    sharedFileNotice?: string
+  ) => {
     setActiveTab('analyze');
     setCurrentReport(null);
-    setInputMode('url');
     setUrlInput(sharedUrl);
     if (sharedTitle) setContentTitle(sharedTitle);
     if (sharedText && sharedText !== sharedUrl) {
@@ -74,14 +87,18 @@ export default function App() {
     const validation = validateAndNormalizeUrl(sharedUrl);
     if (!validation.valid || !validation.normalizedUrl) {
       setSharedNotice(
-        '외부 앱에서 공유 데이터가 전달되었으나 유효한 링크 형식을 찾지 못했습니다. 링크를 확인해 주세요.'
+        sharedFileNotice ||
+          '외부 앱에서 공유 데이터가 전달되었으나 유효한 링크 형식을 찾지 못했습니다. 링크를 확인해 주세요.'
       );
       return;
     }
 
     setUrlInput(validation.normalizedUrl);
+    setShortVideoNormalizedUrl(validation.isShortVideo ? validation.normalizedUrl : null);
     setSharedNotice(
-      `공유된 링크(${validation.normalizedUrl})를 입력창에 자동 등록했습니다.`
+      sharedFileNotice
+        ? `${sharedFileNotice} 공유된 링크(${validation.normalizedUrl})도 함께 입력창에 등록했습니다.`
+        : `공유된 링크(${validation.normalizedUrl})를 입력창에 자동 등록했습니다.`
     );
 
     try {
@@ -106,79 +123,199 @@ export default function App() {
   };
 
   useEffect(() => {
-    const shared = extractShareTargetParams(window.location.search);
-    if (!shared.hasSharedParams) return;
+    let cancelled = false;
 
-    if (shared.url) {
-      void applySharedUrl(shared.url, shared.title, shared.text);
-    } else if (shared.text || shared.title) {
-      setInputMode('text');
-      if (shared.title) setContentTitle(shared.title);
-      if (shared.text) setTextInput(shared.text);
-      setSharedNotice('외부 앱에서 전달된 텍스트가 분석 입력창에 자동 등록되었습니다.');
-    }
+    const handleInitialShareParams = async () => {
+      const searchParams = new URLSearchParams(window.location.search);
+      const shareId = searchParams.get('shareId')?.trim() || undefined;
+      const shared = extractShareTargetParams(window.location.search);
 
-    if (window.history?.replaceState) {
-      const cleanUrl = window.location.pathname;
-      window.history.replaceState({}, document.title, cleanUrl);
-    }
+      let idbPayload = null;
+      if (shareId) {
+        idbPayload = await consumeSharedMediaRecord(shareId);
+      }
+
+      if (cancelled) return;
+
+      const resolvedUrl = idbPayload?.url || shared.url;
+      const resolvedTitle = idbPayload?.title || shared.title;
+      const resolvedText = idbPayload?.text || shared.text;
+
+      let fileNotice: string | undefined;
+      if (idbPayload?.file) {
+        const fileCheck = validateVideoFileMeta(idbPayload.file);
+        if (fileCheck.valid) {
+          setActiveTab('analyze');
+          setCurrentReport(null);
+          setUploadedVideoFile(idbPayload.file);
+          fileNotice = `공유된 영상 파일(${idbPayload.file.name})을 업로드 칸에 바로 등록했습니다.`;
+        } else {
+          setErrorMessage(
+            fileCheck.error || '공유된 영상 파일 형식이 지원되지 않습니다. MP4·MOV 파일을 사용해 주세요.'
+          );
+        }
+      }
+
+      if (resolvedUrl) {
+        await applySharedUrl(resolvedUrl, resolvedTitle, resolvedText, fileNotice);
+      } else if (fileNotice) {
+        if (resolvedTitle) setContentTitle(resolvedTitle);
+        if (resolvedText) setTranscriptInput(resolvedText);
+        setSharedNotice(
+          `${fileNotice} 바로 '신뢰도 분석 시작'을 누르거나 추가 링크·메모를 적을 수 있어요.`
+        );
+      } else if (shared.hasSharedParams && (resolvedText || resolvedTitle)) {
+        if (resolvedTitle) setContentTitle(resolvedTitle);
+        if (resolvedText) setTranscriptInput(resolvedText);
+        setSharedNotice(
+          '외부 앱에서 전달된 내용을 영상 자막·메모 입력창에 등록했습니다. 영상 링크를 입력해 주세요.'
+        );
+      }
+
+      if ((shareId || shared.hasSharedParams) && window.history?.replaceState) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    };
+
+    void handleInitialShareParams();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const handleSimulateVideoShare = () => {
+    // Minimal valid-header MP4 blob for gallery video share target preview
+    const sampleMp4Bytes = new Uint8Array([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32,
+      0x00, 0x00, 0x00, 0x00, 0x6d, 0x70, 0x34, 0x32, 0x69, 0x73, 0x6f, 0x6d,
+    ]);
+    const sampleFile = new File([sampleMp4Bytes], 'gallery-shared-reel.mp4', {
+      type: 'video/mp4',
+    });
+    setActiveTab('analyze');
+    setCurrentReport(null);
+    setErrorMessage(null);
+    setUploadedVideoFile(sampleFile);
+    setSharedNotice(
+      `안드로이드 갤러리 공유 시뮬레이션으로 영상(${sampleFile.name})이 업로드 칸에 등록되었습니다.`
+    );
+  };
+
+  const handleCancelAnalysis = () => {
+    activeRequestIdRef.current += 1;
+    if (analyzeAbortRef.current) {
+      analyzeAbortRef.current.abort();
+      analyzeAbortRef.current = null;
+    }
+    setIsAnalyzing(false);
+    setErrorMessage(null);
+  };
 
   const handleStartAnalysis = async () => {
     setErrorMessage(null);
 
-    let normalizedUrl: string | undefined;
-    let detectedPlatform = inspectionResult?.platform;
+    const gate = canStartUrlScreenAnalysis({
+      urlInput,
+      hasUploadedVideo: Boolean(uploadedVideoFile),
+      transcriptInput,
+    });
+    if (!gate.allowed) {
+      setErrorMessage(gate.error || '분석할 영상 링크 또는 영상 파일을 확인해 주세요.');
+      return;
+    }
 
-    if (inputMode === 'url') {
-      const validation = validateAndNormalizeUrl(urlInput);
+    const trimmedUrl = urlInput.trim();
+    let normalizedUrl: string | undefined;
+    let detectedPlatform: PlatformType = 'web';
+    let isShortVideo = true;
+
+    if (trimmedUrl) {
+      const validation = validateAndNormalizeUrl(trimmedUrl);
       if (!validation.valid || !validation.normalizedUrl || !validation.platform) {
         setErrorMessage(validation.error || '올바른 영상 또는 게시물 링크를 입력해 주세요.');
         return;
       }
       normalizedUrl = validation.normalizedUrl;
       detectedPlatform = validation.platform;
+      isShortVideo = Boolean(
+        validation.isShortVideo ||
+          shortVideoNormalizedUrl === normalizedUrl ||
+          detectedPlatform === 'instagram'
+      );
+      if (isShortVideo) {
+        setShortVideoNormalizedUrl(normalizedUrl);
+      }
       setUrlInput(normalizedUrl);
+    }
 
-      const isYouTube = detectedPlatform === 'youtube' && Boolean(validation.youtubeVideoId);
-      if (!isYouTube && transcriptInput.trim().length < 8) {
-        setErrorMessage(
-          '영상을 불러올 수 없어요. 이 링크는 플랫폼 제한으로 영상을 직접 불러올 수 없으니 아래 입력란에 영상 내용이나 자막을 입력해 주세요.'
-        );
-        return;
-      }
-    } else if (inputMode === 'text') {
-      if (textInput.trim().length < 8) {
-        setErrorMessage('분석할 텍스트를 8자 이상 입력해 주세요.');
-        return;
-      }
-    } else if (inputMode === 'image') {
-      if (!imageDataUrl) {
-        setErrorMessage('분석할 이미지 파일을 먼저 업로드해 주세요.');
+    if (uploadedVideoFile) {
+      const fileCheck = validateVideoFileMeta(uploadedVideoFile);
+      if (!fileCheck.valid) {
+        setErrorMessage(fileCheck.error || '지원되는 영상 파일(mp4, mov)을 선택해 주세요.');
         return;
       }
     }
 
+    // Abort any previous in-flight analysis before starting a new one
+    if (analyzeAbortRef.current) {
+      analyzeAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    analyzeAbortRef.current = controller;
+    const requestId = ++activeRequestIdRef.current;
+
     setIsAnalyzing(true);
     try {
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          inputMode,
-          sourceUrl: normalizedUrl,
-          platform: detectedPlatform,
-          contentTitle: contentTitle.trim() || inspectionResult?.title || undefined,
-          textContent: inputMode === 'text' || inputMode === 'image' ? textInput.trim() : undefined,
-          transcriptOrNotes: inputMode === 'url' ? transcriptInput.trim() : undefined,
-          imageDataUrl: inputMode === 'image' ? imageDataUrl : undefined,
-        }),
-      });
+      let response: Response;
+      const effectiveTitle = contentTitle.trim() || inspectionResult?.title || '';
+      const effectiveNotes = transcriptInput.trim();
+
+      if (uploadedVideoFile) {
+        const formData = new FormData();
+        formData.append('videoFile', uploadedVideoFile);
+        formData.append('inputMode', 'url');
+        if (normalizedUrl) {
+          formData.append('sourceUrl', normalizedUrl);
+          formData.append('platform', detectedPlatform);
+        }
+        formData.append('isShortVideo', String(isShortVideo));
+        if (effectiveTitle) {
+          formData.append('contentTitle', effectiveTitle);
+        }
+        if (effectiveNotes) {
+          formData.append('transcriptOrNotes', effectiveNotes);
+        }
+
+        response = await fetch('/api/analyze', {
+          method: 'POST',
+          signal: controller.signal,
+          body: formData,
+        });
+      } else {
+        response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            inputMode: 'url',
+            sourceUrl: normalizedUrl,
+            platform: detectedPlatform,
+            isShortVideo,
+            contentTitle: effectiveTitle || undefined,
+            transcriptOrNotes: effectiveNotes || undefined,
+          }),
+        });
+      }
 
       const data = await response.json();
+
+      if (controller.signal.aborted || requestId !== activeRequestIdRef.current) {
+        return;
+      }
+
       if (!response.ok) {
         setErrorMessage(data.error || '콘텐츠 분석 중 오류가 발생했습니다.');
-        setIsAnalyzing(false);
         return;
       }
 
@@ -189,15 +326,20 @@ export default function App() {
       const report: AnalysisReport = {
         id: `rep-${Date.now()}`,
         createdAt: new Date().toISOString(),
-        inputMode,
+        inputMode: 'url',
         sourceUrl: data.normalizedUrl || normalizedUrl,
         platform: data.platform || detectedPlatform,
         contentTitle: data.contentTitle,
         analyzedVideoInfo: data.analyzedVideoInfo,
         inputSummary: data.inputSummary,
         extractedImageText: data.extractedImageText,
+        reliabilityScore: data.reliabilityScore,
+        scoreBreakdown: data.scoreBreakdown,
+        aiSuspicion: data.aiSuspicion,
+        factCheck: data.factCheck,
         overallStatus: data.overallStatus,
         overallSummary: data.overallSummary,
+        threeLineSummary: data.threeLineSummary,
         disclaimer: data.disclaimer,
         coreClaims: data.coreClaims,
         exaggeratedExpressions: data.exaggeratedExpressions,
@@ -210,15 +352,29 @@ export default function App() {
       setCurrentReport(report);
       setHistory((prev) => [report, ...prev].slice(0, 20));
       setActiveTab('analyze');
-    } catch {
+    } catch (err) {
+      if (
+        (err instanceof DOMException && err.name === 'AbortError') ||
+        controller.signal.aborted ||
+        requestId !== activeRequestIdRef.current
+      ) {
+        return;
+      }
       setErrorMessage('서버와 통신하지 못했습니다. 네트워크 연결 상태를 확인해 주세요.');
     } finally {
-      setIsAnalyzing(false);
+      if (analyzeAbortRef.current === controller) {
+        analyzeAbortRef.current = null;
+      }
+      if (requestId === activeRequestIdRef.current) {
+        setIsAnalyzing(false);
+      }
     }
   };
 
   const handleResetToNew = () => {
+    handleCancelAnalysis();
     setCurrentReport(null);
+    setUploadedVideoFile(null);
     setErrorMessage(null);
     setActiveTab('analyze');
   };
@@ -239,9 +395,9 @@ export default function App() {
         {isAnalyzing ? (
           <AnalysisProgress
             contentLabel={
-              contentTitle || urlInput || imageFileName || textInput.slice(0, 60) || '콘텐츠'
+              contentTitle || urlInput || uploadedVideoFile?.name || '영상 콘텐츠'
             }
-            onCancel={() => setIsAnalyzing(false)}
+            onCancel={handleCancelAnalysis}
           />
         ) : activeTab === 'analyze' ? (
           currentReport ? (
@@ -252,22 +408,14 @@ export default function App() {
             />
           ) : (
             <InputWorkbench
-              inputMode={inputMode}
-              onChangeMode={setInputMode}
               urlInput={urlInput}
               onChangeUrlInput={setUrlInput}
               contentTitle={contentTitle}
               onChangeContentTitle={setContentTitle}
-              textInput={textInput}
-              onChangeTextInput={setTextInput}
               transcriptInput={transcriptInput}
               onChangeTranscriptInput={setTranscriptInput}
-              imageDataUrl={imageDataUrl}
-              imageFileName={imageFileName}
-              onChangeImage={(dataUrl, fileName) => {
-                setImageDataUrl(dataUrl);
-                setImageFileName(fileName);
-              }}
+              uploadedVideoFile={uploadedVideoFile}
+              onChangeUploadedVideoFile={setUploadedVideoFile}
               inspectionResult={inspectionResult}
               onSetInspectionResult={setInspectionResult}
               sharedNotice={sharedNotice}
@@ -305,6 +453,7 @@ export default function App() {
             onSimulateShareTarget={(url, title) => {
               void applySharedUrl(url, title);
             }}
+            onSimulateVideoShare={handleSimulateVideoShare}
           />
         )}
       </main>

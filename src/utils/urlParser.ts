@@ -5,6 +5,7 @@ export interface UrlValidationResult {
   normalizedUrl?: string;
   platform?: PlatformType;
   youtubeVideoId?: string;
+  isShortVideo?: boolean;
   error?: string;
 }
 
@@ -130,6 +131,10 @@ export function validateAndNormalizeUrl(rawInput: string): UrlValidationResult {
 
   const platform = detectPlatform(parsed.hostname);
   const youtubeVideoId = platform === 'youtube' ? extractYouTubeVideoId(parsed) : undefined;
+  const isShortVideo =
+    (platform === 'youtube' && parsed.pathname.toLowerCase().includes('/shorts/')) ||
+    platform === 'tiktok' ||
+    platform === 'instagram';
 
   if (platform === 'youtube' && !youtubeVideoId) {
     return {
@@ -149,7 +154,15 @@ export function validateAndNormalizeUrl(rawInput: string): UrlValidationResult {
     normalizedUrl,
     platform,
     youtubeVideoId,
+    isShortVideo,
   };
+}
+
+export function isInstagramUrl(rawInput: string): boolean {
+  const trimmed = rawInput.trim();
+  if (!trimmed) return false;
+  const validation = validateAndNormalizeUrl(trimmed);
+  return Boolean(validation.valid && validation.platform === 'instagram');
 }
 
 export function extractShareTargetParams(search: string): SharedPayload {

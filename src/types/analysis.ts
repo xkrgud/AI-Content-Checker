@@ -78,7 +78,113 @@ export interface AnalyzedVideoInfo {
   author?: string;
   thumbnailUrl?: string;
   normalizedUrl?: string;
+  uploadedFileName?: string;
   whatVideoIsAbout: string;
+}
+
+export interface ThreeLineSummary {
+  whatItIs: string;
+  watchOutFor: string;
+  howToVerify: string;
+}
+
+export type AiSuspicionLevel = '의심 단서 적음' | '일부 의심' | '의심 단서 많음' | '판별 불가';
+
+export interface AiTimestampClue {
+  id: string;
+  category: string;
+  timestamp: string;
+  description: string;
+}
+
+export interface AiLogoClue {
+  toolName: string;
+  timestamp: string;
+  description: string;
+}
+
+export interface RealFootageClue {
+  timestamp?: string;
+  description: string;
+}
+
+export interface AiSuspicionBreakdown {
+  available: boolean;
+  totalScore: number | null;
+  maxScore: 100;
+  level: AiSuspicionLevel;
+  logoFound: boolean;
+  logoScore: number;
+  logoMaxScore: 40;
+  timestampedClueCount: number;
+  excludedClueCount: number;
+  timestampCluesScore: number;
+  timestampCluesMaxScore: 40;
+  metadataKeywordFound: boolean;
+  metadataKeywordScore: number;
+  metadataKeywordMaxScore: 20;
+  totalCluesDetected: number;
+}
+
+export interface AiSuspicionReport {
+  available: boolean;
+  score: number | null;
+  level: AiSuspicionLevel;
+  breakdown: AiSuspicionBreakdown;
+  creatorDisclosedSyntheticMedia: boolean;
+  aiLogos: AiLogoClue[];
+  visualAndAudioClues: AiTimestampClue[];
+  metadataKeywords: string[];
+  realFootageClues: RealFootageClue[];
+  summaryNote: string;
+  sampledFps?: number;
+  agenticVideoEnabled?: boolean;
+}
+
+export interface ScoreBreakdown {
+  totalScore: number;
+  maxScore: 100;
+  checklistScore: number;
+  checklistMaxScore: 75;
+  checklistItemsBreakdown: Array<{
+    id: string;
+    label: string;
+    verdict: ChecklistVerdict;
+    score: number;
+    maxScore: 15;
+  }>;
+  exaggerationScore: number;
+  exaggerationMaxScore: 15;
+  exaggerationCount: number;
+  aiGenerationScore: number;
+  aiGenerationMaxScore: 10;
+  aiLikelihoodLevel: AiLikelihoodLevel;
+  aiSuspicionScore?: number | null;
+  aiSuspicionLevel?: AiSuspicionLevel;
+}
+
+export interface FactCheckSource {
+  title: string;
+  url: string;
+}
+
+export type FactCheckStatus = 'sources_found' | 'not_found';
+
+export interface ClaimFactCheck {
+  claimId: string;
+  claim: string;
+  status: FactCheckStatus;
+  summary: string;
+  sources: FactCheckSource[];
+  searchQueries: string[];
+}
+
+export interface FactCheckReport {
+  checkedCount: number;
+  verifiedCount: number;
+  notFoundCount: number;
+  items: ClaimFactCheck[];
+  uncheckedClaims: CoreClaim[];
 }
 
 export interface AnalysisReport {
@@ -91,8 +197,13 @@ export interface AnalysisReport {
   analyzedVideoInfo?: AnalyzedVideoInfo;
   inputSummary: string;
   extractedImageText?: string;
+  reliabilityScore: number;
+  scoreBreakdown: ScoreBreakdown;
+  aiSuspicion?: AiSuspicionReport;
+  factCheck?: FactCheckReport;
   overallStatus: OverallStatus;
   overallSummary: string;
+  threeLineSummary: ThreeLineSummary;
   disclaimer: string;
   coreClaims: CoreClaim[];
   exaggeratedExpressions: ExaggeratedExpression[];

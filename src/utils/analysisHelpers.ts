@@ -1,16 +1,110 @@
 import type {
+  AiLikelihoodLevel,
+  AiSuspicionLevel,
   ChecklistItem,
   ChecklistVerdict,
   CoreClaim,
   OverallStatus,
+  ScoreBreakdown,
 } from '../types/analysis.ts';
+import { getReliabilityScoreFromAiSuspicion } from './aiSuspicion.ts';
 
 export interface OverallStatusMeta {
   label: string;
   description: string;
   containerClass: string;
   badgeTextClass: string;
+  gaugeStrokeColor: string;
   iconName: 'shield-alert' | 'alert-triangle' | 'shield-check';
+}
+
+export function getChecklistItemScore(verdict: ChecklistVerdict): number {
+  switch (verdict) {
+    case '예':
+      return 15;
+    case '확인 필요':
+      return 8;
+    case '아니오':
+      return 0;
+  }
+}
+
+export function getExaggerationCountScore(count: number): number {
+  if (count <= 0) return 15;
+  if (count <= 2) return 8;
+  return 0;
+}
+
+export function getAiGenerationScore(level: AiLikelihoodLevel): number {
+  switch (level) {
+    case '가능성 낮음':
+      return 10;
+    case '판별 불확실':
+    case '일부 AI 활용 가능성':
+      return 5;
+    case 'AI 생성·합성 의심 요소 발견':
+      return 0;
+  }
+}
+
+export function calculateReliabilityScore(params: {
+  checklist: ChecklistItem[];
+  exaggeratedCount: number;
+  aiLikelihoodLevel: AiLikelihoodLevel;
+  aiSuspicionScore?: number | null;
+  aiSuspicionLevel?: AiSuspicionLevel;
+}): ScoreBreakdown {
+  const coreChecklistItems = params.checklist
+    .filter((item) => item.category === '기본 검증')
+    .slice(0, 5);
+
+  const checklistItemsBreakdown = coreChecklistItems.map((item) => {
+    const score = getChecklistItemScore(item.aiVerdict);
+    return {
+      id: item.id,
+      label: item.question,
+      verdict: item.aiVerdict,
+      score,
+      maxScore: 15 as const,
+    };
+  });
+
+  const checklistScore = checklistItemsBreakdown.reduce((sum, item) => sum + item.score, 0);
+  const exaggerationCount = Math.max(0, params.exaggeratedCount);
+  const exaggerationScore = getExaggerationCountScore(exaggerationCount);
+
+  const hasSuspicionInput =
+    params.aiSuspicionLevel !== undefined || params.aiSuspicionScore !== undefined;
+  const aiGenerationScore = hasSuspicionInput
+    ? getReliabilityScoreFromAiSuspicion(params.aiSuspicionScore)
+    : getAiGenerationScore(params.aiLikelihoodLevel);
+  const totalScore = checklistScore + exaggerationScore + aiGenerationScore;
+
+  return {
+    totalScore,
+    maxScore: 100,
+    checklistScore,
+    checklistMaxScore: 75,
+    checklistItemsBreakdown,
+    exaggerationScore,
+    exaggerationMaxScore: 15,
+    exaggerationCount,
+    aiGenerationScore,
+    aiGenerationMaxScore: 10,
+    aiLikelihoodLevel: params.aiLikelihoodLevel,
+    aiSuspicionScore: params.aiSuspicionScore,
+    aiSuspicionLevel: params.aiSuspicionLevel,
+  };
+}
+
+export function determineOverallStatusFromScore(score: number): OverallStatus {
+  if (score >= 70) {
+    return 'low_risk_observed';
+  }
+  if (score >= 40) {
+    return 'caution_found';
+  }
+  return 'needs_verification';
 }
 
 export function getOverallStatusMeta(status: OverallStatus): OverallStatusMeta {
@@ -19,27 +113,30 @@ export function getOverallStatusMeta(status: OverallStatus): OverallStatusMeta {
       return {
         label: '추가 검증 필요',
         description:
-          '근거가 불충분하거나 과장·확신 표현이 다수 발견되어 공신력 있는 자료로 교차 확인이 필요합니다.',
+          '믿을 만한 근거가 부족하거나 과장된 표현이 많아요. 다른 믿을 수 있는 자료로 꼭 다시 확인해 보세요.',
         containerClass: 'bg-rose-50 border-rose-200 text-rose-950',
         badgeTextClass: 'text-rose-800',
+        gaugeStrokeColor: '#BE123C',
         iconName: 'shield-alert',
       };
     case 'caution_found':
       return {
         label: '주의할 요소 발견',
         description:
-          '일부 과장·홍보성 표현이나 출처 보완이 필요한 주장이 포함되어 있어 주의 깊게 살펴보아야 합니다.',
+          '과장되거나 출처가 모호한 부분이 일부 보여요. 내용을 그대로 믿기 전에 한 번 더 확인하는 게 좋아요.',
         containerClass: 'bg-amber-50 border-amber-200 text-amber-950',
         badgeTextClass: 'text-amber-800',
+        gaugeStrokeColor: '#B45309',
         iconName: 'alert-triangle',
       };
     case 'low_risk_observed':
       return {
         label: '확인할 만한 위험 요소가 적음',
         description:
-          '뚜렷한 과장 표현이나 근거 없는 단정은 적으나, 핵심 사실과 출처는 직접 한 번 더 확인하는 것이 좋습니다.',
+          '과장된 말이나 의심되는 요소가 적은 편이에요. 그래도 중요한 정보는 공식 자료와 한 번 더 비교해 보세요.',
         containerClass: 'bg-emerald-50 border-emerald-200 text-emerald-950',
         badgeTextClass: 'text-emerald-800',
+        gaugeStrokeColor: '#15803D',
         iconName: 'shield-check',
       };
   }
@@ -95,28 +192,28 @@ export const CORE_CHECKLIST_QUESTIONS: Array<{
 }> = [
   {
     id: 'chk-evidence',
-    question: '콘텐츠에 객관적인 근거(실험, 데이터, 공식 기록)가 제시되어 있는가?',
-    hint: '단순 경험담이나 출처 없는 수치만 나열되어 있는지 AI가 점검합니다.',
+    question: '주장을 뒷받침하는 실험·데이터·공식 기록 같은 근거가 들어 있나요?',
+    hint: '단순한 경험담이나 출처 없는 숫자만 말하고 있는지 살펴봅니다.',
   },
   {
     id: 'chk-source',
-    question: '주장에 대한 출처(기관, 연구자, 원문 링크, 발행 시점)가 명확한가?',
-    hint: '"전문가들에 따르면", "해외 연구 결과"처럼 모호하게 언급했는지 확인합니다.',
+    question: '누가, 언제, 어디서 발표한 자료인지 출처가 분명한가요?',
+    hint: '"전문가들이 그렇대요"처럼 막연하게 말하지 않고 실제 기관이나 자료 이름을 밝혔는지 봅니다.',
   },
   {
     id: 'chk-stats',
-    question: '제시된 통계나 연구 결과를 공신력 있는 자료에서 확인할 수 있는 형태인가?',
-    hint: '실제 기관명·논문명·통계 출처가 특정되어 대조 가능한지 점검합니다.',
+    question: '나온 숫자나 연구 결과를 믿을 수 있는 기관에서 찾아볼 수 있나요?',
+    hint: '국가 기관이나 학술 자료 등에서 다시 검색해 확인할 수 있는 구체적인 정보인지 봅니다.',
   },
   {
     id: 'chk-exaggeration',
-    question: '과장되거나 오해를 유발하는 표현 없이 절제된 언어로 전달하고 있는가?',
-    hint: '"무조건", "100%", "기적", "충격" 같은 과장·불안 유발 표현 여부를 점검합니다.',
+    question: '과장하거나 오해하게 만드는 말 없이 차분하게 설명하고 있나요?',
+    hint: '"무조건", "100%", "기적", "안 하면 큰일" 같은 자극적인 표현이 없는지 봅니다.',
   },
   {
     id: 'chk-cross-check',
-    question: '단일 주장이나 홍보 목적에 치우치지 않고 균형 있는 맥락을 제공하는가?',
-    hint: '반대 의견, 조건, 제한사항이나 광고성 목적이 숨어 있지 않은지 확인합니다.',
+    question: '한쪽 이야기나 홍보에만 치우치지 않고 균형 있게 설명하나요?',
+    hint: '주의할 점이나 반대 의견, 단점도 함께 알려주는지 살펴봅니다.',
   },
 ];
 
@@ -133,9 +230,9 @@ export function buildDefaultChecklist(coreClaims: CoreClaim[]): ChecklistItem[] 
 
   const dynamicItems: ChecklistItem[] = coreClaims.slice(0, 2).map((claim, idx) => ({
     id: `chk-claim-${idx + 1}`,
-    question: `핵심 주장 "${claim.claim}"에 충분한 근거가 제시되었는가?`,
+    question: `핵심 주장 "${claim.claim}"에 충분한 근거가 있나요?`,
     category: '주장별 검증',
-    hint: claim.evidenceNeeds || '해당 주장을 뒷받침하는 공식 자료 여부를 점검합니다.',
+    hint: claim.evidenceNeeds || '이 주장을 뒷받침하는 공식 자료가 있는지 살펴봅니다.',
     aiVerdict: '확인 필요',
     aiReason: claim.evidenceNeeds || '추가 확인이 필요합니다.',
     checked: false,

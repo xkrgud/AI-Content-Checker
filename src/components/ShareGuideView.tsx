@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
-import { Download, ExternalLink, Share2, Smartphone } from 'lucide-react';
+import { Download, ExternalLink, Film, Share2, Smartphone } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface ShareGuideViewProps {
   onSimulateShareTarget: (url: string, title: string) => void;
+  onSimulateVideoShare: () => void;
 }
 
-export const ShareGuideView: React.FC<ShareGuideViewProps> = ({ onSimulateShareTarget }) => {
+export const ShareGuideView: React.FC<ShareGuideViewProps> = ({
+  onSimulateShareTarget,
+  onSimulateVideoShare,
+}) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSModal, setShowIOSModal] = useState(false);
 
@@ -15,12 +19,12 @@ export const ShareGuideView: React.FC<ShareGuideViewProps> = ({ onSimulateShareT
       <div className="border-b border-slate-200 pb-6">
         <p className="text-xs font-medium text-slate-500">Web Share Target · 모바일 앱 연동</p>
         <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
-          외부 앱에서 바로 공유해 분석하기
+          외부 앱·갤러리에서 바로 공유해 분석하기
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          YouTube, Instagram 릴스 등을 보다가 링크를 다시 복사·붙여넣기하지 않고, OS 공유 메뉴에서{' '}
-          <strong className="font-semibold text-slate-900">AI Content Checker</strong>를 선택해
-          링크를 전달할 수 있습니다.
+          YouTube, Instagram 릴스 링크는 물론이고 안드로이드 갤러리에 저장한 영상 파일(mp4, mov)을
+          공유 메뉴에서 <strong className="font-semibold text-slate-900">AI Content Checker</strong>로
+          보내면 업로드 칸에 바로 들어갑니다.
         </p>
       </div>
 
@@ -37,7 +41,7 @@ export const ShareGuideView: React.FC<ShareGuideViewProps> = ({ onSimulateShareT
               <h2 className="text-base font-bold text-slate-950">홈 화면에 웹 앱(PWA) 설치</h2>
               <p className="mt-1 text-xs leading-relaxed text-slate-600">
                 {isInstalled
-                  ? '현재 설치된 앱 모드로 실행 중입니다. Android 공유 시트에서 바로 선택할 수 있습니다.'
+                  ? '현재 설치된 앱 모드로 실행 중입니다. Android 공유 시트에서 링크와 갤러리 영상을 바로 보낼 수 있습니다.'
                   : '브라우저에서 홈 화면에 추가하면 Android 공유 메뉴에 AI Content Checker가 등록됩니다.'}
               </p>
             </div>
@@ -68,15 +72,15 @@ export const ShareGuideView: React.FC<ShareGuideViewProps> = ({ onSimulateShareT
         </div>
 
         <div className="border-t border-slate-100 pt-4 text-xs leading-relaxed text-slate-600 space-y-1.5">
-          <p className="font-semibold text-slate-900">공유 링크 수신과 영상 분석의 구분 안내</p>
+          <p className="font-semibold text-slate-900">공유 방식별 안내</p>
           <p>
-            • <strong className="text-slate-800">링크 수신 단계</strong>: 외부 앱의 공유하기 기능을
-            통해 전달된 URL을 분석 입력창에 자동 등록합니다.
+            • <strong className="text-slate-800">링크 공유 (?url= / 공유 시트)</strong>: 외부 앱의
+            공유하기로 전달된 URL을 분석 입력창에 자동 등록합니다.
           </p>
           <p>
-            • <strong className="text-slate-800">콘텐츠 분석 단계</strong>: 공개 자막 추출이 가능한
-            영상은 내용을 자동으로 불러오며, 플랫폼 정책상 접근이 제한된 릴스·비공개 영상은 자막이나
-            핵심 발언을 직접 보완 입력해 분석합니다.
+            • <strong className="text-slate-800">갤러리 영상 공유 (video/*)</strong>: 인스타그램
+            공유 버튼 → &apos;다운로드&apos;로 저장한 릴스나 휴대폰 갤러리 영상을 바로 공유하면
+            업로드 칸에 자동으로 들어갑니다.
           </p>
         </div>
       </div>
@@ -88,11 +92,15 @@ export const ShareGuideView: React.FC<ShareGuideViewProps> = ({ onSimulateShareT
           <div className="space-y-1">
             <h2 className="text-base font-bold text-slate-950">외부 앱 공유 전달 동작 테스트</h2>
             <p className="text-sm text-slate-600">
-              데스크톱 환경이나 브라우저 테스트 시, 외부 앱이 공유 파라미터(
+              데스크톱 환경이나 브라우저 테스트 시, 링크 공유(
               <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">
                 ?url=...&amp;title=...
               </code>
-              )로 링크를 전달하는 동작을 바로 체험할 수 있습니다.
+              ) 및 갤러리 영상 파일 공유(
+              <code className="font-mono text-xs bg-slate-100 px-1.5 py-0.5 rounded">
+                multipart/form-data
+              </code>
+              ) 동작을 바로 체험할 수 있습니다.
             </p>
           </div>
         </div>
@@ -123,6 +131,14 @@ export const ShareGuideView: React.FC<ShareGuideViewProps> = ({ onSimulateShareT
           >
             <ExternalLink className="h-4 w-4 text-slate-600" aria-hidden="true" />
             유튜브 쇼츠 공유 시뮬레이션
+          </button>
+          <button
+            type="button"
+            onClick={onSimulateVideoShare}
+            className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-950 hover:bg-blue-100 cursor-pointer"
+          >
+            <Film className="h-4 w-4 text-blue-700" aria-hidden="true" />
+            갤러리 영상 공유 시뮬레이션
           </button>
         </div>
       </div>
